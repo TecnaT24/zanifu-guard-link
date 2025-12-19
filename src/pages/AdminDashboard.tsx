@@ -6,26 +6,33 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Shield, Users, Activity, ArrowLeft, RefreshCw, 
-  CheckCircle, XCircle, AlertTriangle, Clock
+  CheckCircle, XCircle, AlertTriangle, Clock, Unlock, Lock, UserCog
 } from "lucide-react";
 import type { Database } from "@/integrations/supabase/types";
 
 type Profile = Database["public"]["Tables"]["profiles"]["Row"];
-type UserRole = Database["public"]["Tables"]["user_roles"]["Row"];
 type LoginAttempt = Database["public"]["Tables"]["login_attempts"]["Row"];
+type AppRole = Database["public"]["Enums"]["app_role"];
 
 interface UserWithRole extends Profile {
-  role?: Database["public"]["Enums"]["app_role"];
+  role?: AppRole;
 }
 
 export default function AdminDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [users, setUsers] = useState<UserWithRole[]>([]);
   const [loginAttempts, setLoginAttempts] = useState<LoginAttempt[]>([]);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [roleDialogOpen, setRoleDialogOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<UserWithRole | null>(null);
+  const [selectedRole, setSelectedRole] = useState<AppRole>("customer");
   const [stats, setStats] = useState({
     totalUsers: 0,
     activeToday: 0,
@@ -47,7 +54,8 @@ export default function AdminDashboard() {
       return;
     }
 
-    // Check if user is admin
+    setCurrentUserId(session.user.id);
+
     const { data: roleData } = await supabase
       .from("user_roles")
       .select("role")
@@ -72,7 +80,6 @@ export default function AdminDashboard() {
     setIsLoading(true);
     
     try {
-      // Load all profiles
       const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
         .select("*")
@@ -80,14 +87,12 @@ export default function AdminDashboard() {
 
       if (profilesError) throw profilesError;
 
-      // Load all roles
       const { data: roles, error: rolesError } = await supabase
         .from("user_roles")
         .select("*");
 
       if (rolesError) throw rolesError;
 
-      // Combine profiles with roles
       const usersWithRoles: UserWithRole[] = (profiles || []).map(profile => ({
         ...profile,
         role: roles?.find(r => r.user_id === profile.user_id)?.role,
@@ -95,7 +100,6 @@ export default function AdminDashboard() {
 
       setUsers(usersWithRoles);
 
-      // Load login attempts (last 100)
       const { data: attempts, error: attemptsError } = await supabase
         .from("login_attempts")
         .select("*")
@@ -105,7 +109,6 @@ export default function AdminDashboard() {
       if (attemptsError) throw attemptsError;
       setLoginAttempts(attempts || []);
 
-      // Calculate stats
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
@@ -136,6 +139,54 @@ export default function AdminDashboard() {
     }
 
     setIsLoading(false);
+  };
+
+  const performAdminAction = async (
+    action: "change_role" | "unlock_account" | "lock_account",
+    targetUserId: string,
+    newRole?: AppRole
+  ) => {
+    setActionLoading(targetUserId);
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Not authenticated");
+
+      const response = await supabase.functions.invoke("admin-actions", {
+        body: { action, targetUserId, newRole },
+      });
+
+      if (response.error) throw response.error;
+
+      const actionLabels = {
+        change_role: `Role changed to ${newRole}`,
+        unlock_account: "Account unlocked",
+        lock_account: "Account locked",
+      };
+
+      toast({
+        title: "Success",
+        description: actionLabels[action],
+      });
+
+      await loadData();
+    } catch (error: any) {
+      console.error("Admin action error:", error);
+      toast({
+        variant: "destructive",
+        title: "Action Failed",
+        description: error.message || "Could not perform action.",
+      });
+    }
+
+    setActionLoading(null);
+    setRoleDialogOpen(false);
+  };
+
+  const openRoleDialog = (user: UserWithRole) => {
+    setSelectedUser(user);
+    setSelectedRole(user.role || "customer");
+    setRoleDialogOpen(true);
   };
 
   const formatDate = (dateString: string | null) => {
@@ -275,7 +326,7 @@ export default function AdminDashboard() {
                           <TableHead>2FA</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead>Last Login</TableHead>
-                          <TableHead>Created</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -317,8 +368,52 @@ export default function AdminDashboard() {
                                 {formatDate(user.last_login_at)}
                               </div>
                             </TableCell>
-                            <TableCell className="text-sm text-muted-foreground">
-                              {formatDate(user.created_at)}
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                {/* Change Role Button */}
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openRoleDialog(user)}
+                                  disabled={actionLoading === user.user_id || user.user_id === currentUserId}
+                                  title={user.user_id === currentUserId ? "Cannot modify your own role" : "Change role"}
+                                >
+                                  <UserCog className="h-4 w-4" />
+                                </Button>
+
+                                {/* Lock/Unlock Button */}
+                                {user.account_locked ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => performAdminAction("unlock_account", user.user_id)}
+                                    disabled={actionLoading === user.user_id}
+                                    className="text-success hover:text-success"
+                                    title="Unlock account"
+                                  >
+                                    {actionLoading === user.user_id ? (
+                                      <RefreshCw className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Unlock className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => performAdminAction("lock_account", user.user_id)}
+                                    disabled={actionLoading === user.user_id || user.user_id === currentUserId}
+                                    className="text-destructive hover:text-destructive"
+                                    title={user.user_id === currentUserId ? "Cannot lock your own account" : "Lock account"}
+                                  >
+                                    {actionLoading === user.user_id ? (
+                                      <RefreshCw className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Lock className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                )}
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -391,6 +486,56 @@ export default function AdminDashboard() {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* Role Change Dialog */}
+      <Dialog open={roleDialogOpen} onOpenChange={setRoleDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change User Role</DialogTitle>
+            <DialogDescription>
+              Update the role for {selectedUser?.full_name || selectedUser?.email}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4">
+            <Select value={selectedRole} onValueChange={(v) => setSelectedRole(v as AppRole)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a role" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="customer">Customer</SelectItem>
+                <SelectItem value="security_personnel">Security Personnel</SelectItem>
+                <SelectItem value="admin">Admin</SelectItem>
+              </SelectContent>
+            </Select>
+            
+            <p className="text-sm text-muted-foreground mt-3">
+              {selectedRole === "admin" && "⚠️ Admins have full access to manage users and system settings."}
+              {selectedRole === "security_personnel" && "Security personnel can view login attempts and security logs."}
+              {selectedRole === "customer" && "Customers have standard access to the e-commerce platform."}
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRoleDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={() => selectedUser && performAdminAction("change_role", selectedUser.user_id, selectedRole)}
+              disabled={actionLoading !== null}
+            >
+              {actionLoading ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Updating...
+                </>
+              ) : (
+                "Update Role"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

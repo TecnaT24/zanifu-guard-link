@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.verify-2fa-code]
 verify_jwt = false
+
+[functions.admin-actions]
+verify_jwt = false
