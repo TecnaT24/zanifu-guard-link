@@ -1,1 +1,7 @@
 project_id = "gphmsrjiuiydmjezqijz"
+
+[functions.send-2fa-code]
+verify_jwt = false
+
+[functions.verify-2fa-code]
+verify_jwt = false
