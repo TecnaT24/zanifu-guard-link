@@ -49,7 +49,7 @@ const phases: Phase[] = [
     description: "Real-time security monitoring, user management, and system health metrics",
     icon: BarChart3,
     status: "in-progress",
-    progress: 30,
+    progress: 45,
     features: [
       "Security log visualization",
       "User & role management",
