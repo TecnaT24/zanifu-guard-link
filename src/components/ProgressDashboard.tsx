@@ -18,7 +18,7 @@ const phases: Phase[] = [
     description: "Secure user registration, login with 2FA, and role-based access control system",
     icon: Shield,
     status: "in-progress",
-    progress: 15,
+    progress: 40,
     features: [
       "Secure registration & login",
       "Two-Factor Authentication (2FA)",

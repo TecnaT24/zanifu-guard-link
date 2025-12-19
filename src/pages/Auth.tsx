@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, Mail, Lock, User, ArrowLeft, AlertCircle } from "lucide-react";
+import { Shield, Mail, Lock, User, ArrowLeft, AlertCircle, KeyRound } from "lucide-react";
 import { z } from "zod";
 
 const loginSchema = z.object({
@@ -31,9 +31,16 @@ const signupSchema = z.object({
   path: ["confirmPassword"],
 });
 
+type AuthStep = "credentials" | "2fa";
+
 export default function Auth() {
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [authStep, setAuthStep] = useState<AuthStep>("credentials");
+  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [resendCooldown, setResendCooldown] = useState(0);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -47,6 +54,14 @@ export default function Auth() {
   const [signupPassword, setSignupPassword] = useState("");
   const [signupConfirmPassword, setSignupConfirmPassword] = useState("");
 
+  // Resend cooldown timer
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
+
   // Check if already logged in
   useEffect(() => {
     const checkSession = async () => {
@@ -58,13 +73,14 @@ export default function Auth() {
     checkSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session) {
-        navigate("/");
+      // Only navigate on successful 2FA or non-2FA login
+      if (session && authStep === "credentials") {
+        // Don't auto-redirect, we need 2FA first
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [navigate]);
+  }, [navigate, authStep]);
 
   const logLoginAttempt = async (email: string, success: boolean, failureReason?: string, userId?: string) => {
     try {
@@ -77,6 +93,23 @@ export default function Auth() {
       });
     } catch (error) {
       // Silent fail for logging
+    }
+  };
+
+  const send2FACode = async (email: string, userId: string) => {
+    try {
+      const response = await supabase.functions.invoke("send-2fa-code", {
+        body: { email, userId },
+      });
+
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
+
+      return true;
+    } catch (error: any) {
+      console.error("Failed to send 2FA code:", error);
+      return false;
     }
   };
 
@@ -116,15 +149,114 @@ export default function Auth() {
         title: "Login Failed",
         description: message,
       });
-    } else {
-      await logLoginAttempt(loginEmail, true, undefined, data.user?.id);
+      setIsLoading(false);
+      return;
+    }
+
+    // Login successful, now trigger 2FA
+    if (data.user) {
+      setPendingUserId(data.user.id);
+      setPendingEmail(loginEmail.trim());
+      
+      const sent = await send2FACode(loginEmail.trim(), data.user.id);
+      if (sent) {
+        setAuthStep("2fa");
+        setResendCooldown(60);
+        toast({
+          title: "Verification Required",
+          description: "A 6-digit code has been sent to your email.",
+        });
+      } else {
+        // Sign out since 2FA failed
+        await supabase.auth.signOut();
+        toast({
+          variant: "destructive",
+          title: "2FA Error",
+          description: "Failed to send verification code. Please try again.",
+        });
+      }
+    }
+
+    setIsLoading(false);
+  };
+
+  const handleVerify2FA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrors({});
+    setIsLoading(true);
+
+    if (verificationCode.length !== 6) {
+      setErrors({ code: "Please enter a 6-digit code" });
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await supabase.functions.invoke("verify-2fa-code", {
+        body: { userId: pendingUserId, code: verificationCode },
+      });
+
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
+
+      const result = response.data;
+
+      if (result.valid) {
+        await logLoginAttempt(pendingEmail!, true, undefined, pendingUserId!);
+        toast({
+          title: "Welcome!",
+          description: "Two-factor authentication successful.",
+        });
+        navigate("/");
+      } else {
+        setErrors({ code: result.error || "Invalid verification code" });
+        toast({
+          variant: "destructive",
+          title: "Verification Failed",
+          description: result.error || "Invalid or expired code. Please try again.",
+        });
+      }
+    } catch (error: any) {
+      console.error("2FA verification error:", error);
       toast({
-        title: "Welcome back!",
-        description: "You have been logged in successfully.",
+        variant: "destructive",
+        title: "Verification Error",
+        description: "Something went wrong. Please try again.",
       });
     }
 
     setIsLoading(false);
+  };
+
+  const handleResendCode = async () => {
+    if (resendCooldown > 0 || !pendingEmail || !pendingUserId) return;
+    
+    setIsLoading(true);
+    const sent = await send2FACode(pendingEmail, pendingUserId);
+    
+    if (sent) {
+      setResendCooldown(60);
+      toast({
+        title: "Code Sent",
+        description: "A new verification code has been sent to your email.",
+      });
+    } else {
+      toast({
+        variant: "destructive",
+        title: "Failed to Resend",
+        description: "Could not send a new code. Please try again.",
+      });
+    }
+    setIsLoading(false);
+  };
+
+  const handleBackToLogin = async () => {
+    await supabase.auth.signOut();
+    setAuthStep("credentials");
+    setPendingUserId(null);
+    setPendingEmail(null);
+    setVerificationCode("");
   };
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -177,16 +309,116 @@ export default function Auth() {
       // Update profile with full name
       if (data.user) {
         await supabase.from("profiles").update({ full_name: signupFullName.trim() }).eq("user_id", data.user.id);
+        
+        // Send 2FA code for new signup
+        setPendingUserId(data.user.id);
+        setPendingEmail(signupEmail.trim());
+        
+        const sent = await send2FACode(signupEmail.trim(), data.user.id);
+        if (sent) {
+          setAuthStep("2fa");
+          setResendCooldown(60);
+          toast({
+            title: "Account Created!",
+            description: "Please verify with the code sent to your email.",
+          });
+        } else {
+          toast({
+            title: "Account Created!",
+            description: "Welcome to Zanifu Secure Commerce.",
+          });
+          navigate("/");
+        }
       }
-      
-      toast({
-        title: "Account Created!",
-        description: "Welcome to Zanifu Secure Commerce.",
-      });
     }
 
     setIsLoading(false);
   };
+
+  // 2FA Verification Screen
+  if (authStep === "2fa") {
+    return (
+      <div className="min-h-screen bg-background flex flex-col">
+        <header className="border-b bg-card">
+          <div className="container flex h-16 items-center">
+            <button
+              onClick={handleBackToLogin}
+              className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              <span className="text-sm">Back to Login</span>
+            </button>
+          </div>
+        </header>
+
+        <main className="flex-1 flex items-center justify-center p-4">
+          <div className="w-full max-w-md">
+            <div className="flex flex-col items-center mb-8">
+              <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary text-primary-foreground mb-4">
+                <KeyRound className="h-7 w-7" />
+              </div>
+              <h1 className="font-display text-2xl font-bold text-foreground">Two-Factor Authentication</h1>
+              <p className="text-sm text-muted-foreground mt-1">Enter the code sent to your email</p>
+            </div>
+
+            <Card className="shadow-corporate">
+              <CardHeader>
+                <CardTitle className="text-lg">Verification Code</CardTitle>
+                <CardDescription>
+                  We sent a 6-digit code to <strong>{pendingEmail}</strong>
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleVerify2FA} className="space-y-6">
+                  <div className="space-y-2">
+                    <Label htmlFor="verification-code">Enter Code</Label>
+                    <Input
+                      id="verification-code"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={6}
+                      placeholder="000000"
+                      value={verificationCode}
+                      onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, ""))}
+                      className="text-center text-2xl tracking-[0.5em] font-mono"
+                      disabled={isLoading}
+                      autoFocus
+                    />
+                    {errors.code && (
+                      <p className="text-xs text-destructive flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" /> {errors.code}
+                      </p>
+                    )}
+                  </div>
+
+                  <Button type="submit" className="w-full" disabled={isLoading || verificationCode.length !== 6}>
+                    {isLoading ? "Verifying..." : "Verify Code"}
+                  </Button>
+
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      onClick={handleResendCode}
+                      disabled={resendCooldown > 0 || isLoading}
+                      className="text-sm text-primary hover:underline disabled:text-muted-foreground disabled:no-underline"
+                    >
+                      {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend code"}
+                    </button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+
+            <p className="text-xs text-muted-foreground text-center mt-6">
+              <Shield className="inline h-3 w-3 mr-1" />
+              Code expires in 10 minutes
+            </p>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -273,6 +505,11 @@ export default function Auth() {
                     <Button type="submit" className="w-full" disabled={isLoading}>
                       {isLoading ? "Signing in..." : "Sign In"}
                     </Button>
+
+                    <p className="text-xs text-muted-foreground text-center">
+                      <KeyRound className="inline h-3 w-3 mr-1" />
+                      Two-factor authentication enabled
+                    </p>
                   </form>
                 </TabsContent>
 
