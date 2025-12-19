@@ -1,12 +1,29 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { Header } from "@/components/Header";
+import { HeroSection } from "@/components/HeroSection";
+import { SecurityStats } from "@/components/SecurityStats";
+import { ProgressDashboard } from "@/components/ProgressDashboard";
 
 const Index = () => {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
+    <div className="min-h-screen bg-background">
+      <Header />
+      <main className="container pb-16">
+        <HeroSection />
+        <SecurityStats />
+        <ProgressDashboard />
+      </main>
+      
+      {/* Footer */}
+      <footer className="border-t bg-card py-8">
+        <div className="container text-center">
+          <p className="text-sm text-muted-foreground">
+            Zanifu Secure E-Commerce Platform • Academic Research Demonstration
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Showcasing cybersecurity best practices for Kenyan SME fintech
+          </p>
+        </div>
+      </footer>
     </div>
   );
 };
