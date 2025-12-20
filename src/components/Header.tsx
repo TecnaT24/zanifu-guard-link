@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Shield, Lock, LogOut, Settings } from "lucide-react";
+import { Shield, Lock, LogOut, Settings, ShoppingBag, Package } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -72,6 +72,14 @@ export function Header() {
           <Link to="/" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
             Dashboard
           </Link>
+          <Link to="/shop" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+            Shop
+          </Link>
+          {user && (
+            <Link to="/orders" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+              My Orders
+            </Link>
+          )}
           {isAdmin && (
             <Link to="/admin" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
               Admin Panel

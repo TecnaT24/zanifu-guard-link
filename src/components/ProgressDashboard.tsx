@@ -33,8 +33,8 @@ const phases: Phase[] = [
     title: "E-Commerce Platform",
     description: "Digital products catalog with secure checkout and transaction audit trails",
     icon: ShoppingCart,
-    status: "not-started",
-    progress: 0,
+    status: "in-progress",
+    progress: 60,
     features: [
       "Product catalog",
       "Secure checkout flow",
