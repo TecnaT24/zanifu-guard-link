@@ -7,16 +7,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Shield, Users, Activity, ArrowLeft, RefreshCw, 
-  CheckCircle, XCircle, AlertTriangle, Clock, Unlock, Lock, UserCog
+  CheckCircle, XCircle, AlertTriangle, Clock, Unlock, Lock, UserCog,
+  Flag, FileText, AlertOctagon, DollarSign, Zap
 } from "lucide-react";
 import type { Database } from "@/integrations/supabase/types";
 
 type Profile = Database["public"]["Tables"]["profiles"]["Row"];
 type LoginAttempt = Database["public"]["Tables"]["login_attempts"]["Row"];
+type FraudFlag = Database["public"]["Tables"]["fraud_flags"]["Row"];
+type TransactionAudit = Database["public"]["Tables"]["transaction_audit"]["Row"];
 type AppRole = Database["public"]["Enums"]["app_role"];
 
 interface UserWithRole extends Profile {
@@ -29,15 +33,22 @@ export default function AdminDashboard() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [users, setUsers] = useState<UserWithRole[]>([]);
   const [loginAttempts, setLoginAttempts] = useState<LoginAttempt[]>([]);
+  const [fraudFlags, setFraudFlags] = useState<FraudFlag[]>([]);
+  const [auditLogs, setAuditLogs] = useState<TransactionAudit[]>([]);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [roleDialogOpen, setRoleDialogOpen] = useState(false);
+  const [resolveDialogOpen, setResolveDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserWithRole | null>(null);
   const [selectedRole, setSelectedRole] = useState<AppRole>("customer");
+  const [selectedFlag, setSelectedFlag] = useState<FraudFlag | null>(null);
+  const [resolutionNotes, setResolutionNotes] = useState("");
   const [stats, setStats] = useState({
     totalUsers: 0,
     activeToday: 0,
     failedLogins: 0,
     lockedAccounts: 0,
+    unresolvedFlags: 0,
+    highSeverityFlags: 0,
   });
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -80,6 +91,7 @@ export default function AdminDashboard() {
     setIsLoading(true);
     
     try {
+      // Load profiles
       const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
         .select("*")
@@ -87,6 +99,7 @@ export default function AdminDashboard() {
 
       if (profilesError) throw profilesError;
 
+      // Load roles
       const { data: roles, error: rolesError } = await supabase
         .from("user_roles")
         .select("*");
@@ -100,6 +113,7 @@ export default function AdminDashboard() {
 
       setUsers(usersWithRoles);
 
+      // Load login attempts
       const { data: attempts, error: attemptsError } = await supabase
         .from("login_attempts")
         .select("*")
@@ -109,6 +123,27 @@ export default function AdminDashboard() {
       if (attemptsError) throw attemptsError;
       setLoginAttempts(attempts || []);
 
+      // Load fraud flags
+      const { data: flags, error: flagsError } = await supabase
+        .from("fraud_flags")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(100);
+
+      if (flagsError) throw flagsError;
+      setFraudFlags(flags || []);
+
+      // Load audit logs
+      const { data: audits, error: auditsError } = await supabase
+        .from("transaction_audit")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(100);
+
+      if (auditsError) throw auditsError;
+      setAuditLogs(audits || []);
+
+      // Calculate stats
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
@@ -121,12 +156,17 @@ export default function AdminDashboard() {
       ).length;
 
       const lockedAccounts = (profiles || []).filter(p => p.account_locked).length;
+      
+      const unresolvedFlags = (flags || []).filter(f => !f.resolved).length;
+      const highSeverityFlags = (flags || []).filter(f => !f.resolved && f.severity === 'high').length;
 
       setStats({
         totalUsers: profiles?.length || 0,
         activeToday,
         failedLogins,
         lockedAccounts,
+        unresolvedFlags,
+        highSeverityFlags,
       });
 
     } catch (error: any) {
@@ -183,10 +223,55 @@ export default function AdminDashboard() {
     setRoleDialogOpen(false);
   };
 
+  const resolveFraudFlag = async () => {
+    if (!selectedFlag) return;
+    
+    setActionLoading(selectedFlag.id);
+    
+    try {
+      const { error } = await supabase
+        .from("fraud_flags")
+        .update({
+          resolved: true,
+          resolved_at: new Date().toISOString(),
+          resolved_by: currentUserId,
+          resolution_notes: resolutionNotes,
+        })
+        .eq("id", selectedFlag.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Flag Resolved",
+        description: "The fraud flag has been marked as resolved.",
+      });
+
+      setResolveDialogOpen(false);
+      setResolutionNotes("");
+      setSelectedFlag(null);
+      await loadData();
+    } catch (error: any) {
+      console.error("Resolve flag error:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to resolve fraud flag.",
+      });
+    }
+    
+    setActionLoading(null);
+  };
+
   const openRoleDialog = (user: UserWithRole) => {
     setSelectedUser(user);
     setSelectedRole(user.role || "customer");
     setRoleDialogOpen(true);
+  };
+
+  const openResolveDialog = (flag: FraudFlag) => {
+    setSelectedFlag(flag);
+    setResolutionNotes("");
+    setResolveDialogOpen(true);
   };
 
   const formatDate = (dateString: string | null) => {
@@ -200,6 +285,38 @@ export default function AdminDashboard() {
       case "security_personnel": return "default";
       default: return "secondary";
     }
+  };
+
+  const getSeverityBadgeVariant = (severity: string) => {
+    switch (severity) {
+      case "high": return "destructive";
+      case "medium": return "default";
+      default: return "secondary";
+    }
+  };
+
+  const getFlagTypeIcon = (flagType: string) => {
+    switch (flagType) {
+      case "velocity": return <Zap className="h-4 w-4" />;
+      case "high_value": return <DollarSign className="h-4 w-4" />;
+      case "daily_limit": return <AlertOctagon className="h-4 w-4" />;
+      default: return <Flag className="h-4 w-4" />;
+    }
+  };
+
+  const getActionLabel = (action: string) => {
+    switch (action) {
+      case "create": return "Created";
+      case "update": return "Updated";
+      case "delete": return "Deleted";
+      default: return action;
+    }
+  };
+
+  const getUserEmail = (userId: string | null) => {
+    if (!userId) return "System";
+    const user = users.find(u => u.user_id === userId);
+    return user?.email || userId.slice(0, 8) + "...";
   };
 
   if (!isAdmin) {
@@ -240,12 +357,12 @@ export default function AdminDashboard() {
             Admin Dashboard
           </h1>
           <p className="text-muted-foreground">
-            Manage users, monitor security, and view system activity
+            Manage users, monitor security, detect fraud, and view audit trails
           </p>
         </div>
 
         {/* Stats Cards */}
-        <div className="grid gap-4 md:grid-cols-4 mb-8">
+        <div className="grid gap-4 md:grid-cols-6 mb-8">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Total Users</CardTitle>
@@ -253,7 +370,7 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{stats.totalUsers}</div>
-              <p className="text-xs text-muted-foreground">Registered accounts</p>
+              <p className="text-xs text-muted-foreground">Registered</p>
             </CardContent>
           </Card>
 
@@ -264,7 +381,7 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-success">{stats.activeToday}</div>
-              <p className="text-xs text-muted-foreground">Logged in today</p>
+              <p className="text-xs text-muted-foreground">Logged in</p>
             </CardContent>
           </Card>
 
@@ -275,32 +392,67 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-warning">{stats.failedLogins}</div>
-              <p className="text-xs text-muted-foreground">Today's failures</p>
+              <p className="text-xs text-muted-foreground">Today</p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Locked Accounts</CardTitle>
-              <AlertTriangle className="h-4 w-4 text-destructive" />
+              <CardTitle className="text-sm font-medium">Locked</CardTitle>
+              <Lock className="h-4 w-4 text-destructive" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-destructive">{stats.lockedAccounts}</div>
-              <p className="text-xs text-muted-foreground">Need attention</p>
+              <p className="text-xs text-muted-foreground">Accounts</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Fraud Flags</CardTitle>
+              <Flag className="h-4 w-4 text-warning" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-warning">{stats.unresolvedFlags}</div>
+              <p className="text-xs text-muted-foreground">Unresolved</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">High Severity</CardTitle>
+              <AlertOctagon className="h-4 w-4 text-destructive" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-destructive">{stats.highSeverityFlags}</div>
+              <p className="text-xs text-muted-foreground">Critical</p>
             </CardContent>
           </Card>
         </div>
 
         {/* Tabs */}
         <Tabs defaultValue="users" className="space-y-4">
-          <TabsList>
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="users" className="gap-2">
               <Users className="h-4 w-4" />
-              Users & Roles
+              <span className="hidden sm:inline">Users</span>
             </TabsTrigger>
             <TabsTrigger value="activity" className="gap-2">
               <Activity className="h-4 w-4" />
-              Login Activity
+              <span className="hidden sm:inline">Logins</span>
+            </TabsTrigger>
+            <TabsTrigger value="fraud" className="gap-2 relative">
+              <Flag className="h-4 w-4" />
+              <span className="hidden sm:inline">Fraud</span>
+              {stats.unresolvedFlags > 0 && (
+                <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                  {stats.unresolvedFlags}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="audit" className="gap-2">
+              <FileText className="h-4 w-4" />
+              <span className="hidden sm:inline">Audit</span>
             </TabsTrigger>
           </TabsList>
 
@@ -370,7 +522,6 @@ export default function AdminDashboard() {
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="flex items-center justify-end gap-2">
-                                {/* Change Role Button */}
                                 <Button
                                   variant="outline"
                                   size="sm"
@@ -381,7 +532,6 @@ export default function AdminDashboard() {
                                   <UserCog className="h-4 w-4" />
                                 </Button>
 
-                                {/* Lock/Unlock Button */}
                                 {user.account_locked ? (
                                   <Button
                                     variant="outline"
@@ -484,6 +634,206 @@ export default function AdminDashboard() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* Fraud Detection Tab */}
+          <TabsContent value="fraud">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Flag className="h-5 w-5 text-warning" />
+                  Fraud Detection Flags
+                </CardTitle>
+                <CardDescription>
+                  Automated fraud detection flags based on order patterns and user behavior
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoading ? (
+                  <div className="text-center py-8 text-muted-foreground">Loading fraud flags...</div>
+                ) : fraudFlags.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Flag className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
+                    <p>No fraud flags detected</p>
+                    <p className="text-sm">The system is monitoring for suspicious activity</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead>Severity</TableHead>
+                          <TableHead>Description</TableHead>
+                          <TableHead>User</TableHead>
+                          <TableHead>Time</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {fraudFlags.map((flag) => (
+                          <TableRow key={flag.id} className={flag.resolved ? "opacity-60" : ""}>
+                            <TableCell>
+                              {flag.resolved ? (
+                                <Badge variant="outline" className="text-success border-success">
+                                  <CheckCircle className="h-3 w-3 mr-1" />
+                                  Resolved
+                                </Badge>
+                              ) : (
+                                <Badge variant="destructive">
+                                  <AlertTriangle className="h-3 w-3 mr-1" />
+                                  Open
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                {getFlagTypeIcon(flag.flag_type)}
+                                <span className="capitalize">{flag.flag_type.replace("_", " ")}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={getSeverityBadgeVariant(flag.severity)}>
+                                {flag.severity}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="max-w-[250px]">
+                              <p className="truncate" title={flag.description}>{flag.description}</p>
+                              {flag.metadata && Object.keys(flag.metadata).length > 0 && (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {JSON.stringify(flag.metadata)}
+                                </p>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {getUserEmail(flag.user_id)}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                              {formatDate(flag.created_at)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {!flag.resolved && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openResolveDialog(flag)}
+                                  disabled={actionLoading === flag.id}
+                                >
+                                  {actionLoading === flag.id ? (
+                                    <RefreshCw className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <>
+                                      <CheckCircle className="h-4 w-4 mr-1" />
+                                      Resolve
+                                    </>
+                                  )}
+                                </Button>
+                              )}
+                              {flag.resolved && flag.resolution_notes && (
+                                <span className="text-xs text-muted-foreground" title={flag.resolution_notes}>
+                                  {flag.resolution_notes.slice(0, 20)}...
+                                </span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Audit Trail Tab */}
+          <TabsContent value="audit">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5" />
+                  Transaction Audit Trail
+                </CardTitle>
+                <CardDescription>
+                  Complete audit log of all order transactions and changes
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoading ? (
+                  <div className="text-center py-8 text-muted-foreground">Loading audit logs...</div>
+                ) : auditLogs.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <FileText className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
+                    <p>No audit logs recorded</p>
+                    <p className="text-sm">Transaction history will appear here</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Action</TableHead>
+                          <TableHead>Entity</TableHead>
+                          <TableHead>User</TableHead>
+                          <TableHead>Changes</TableHead>
+                          <TableHead>Time</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {auditLogs.map((log) => (
+                          <TableRow key={log.id}>
+                            <TableCell>
+                              <Badge variant={log.action_type === "create" ? "default" : "secondary"}>
+                                {getActionLabel(log.action_type)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div>
+                                <span className="capitalize font-medium">{log.entity_type}</span>
+                                {log.entity_id && (
+                                  <p className="text-xs text-muted-foreground">
+                                    {log.entity_id.slice(0, 8)}...
+                                  </p>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {getUserEmail(log.user_id)}
+                            </TableCell>
+                            <TableCell className="max-w-[300px]">
+                              {log.action_type === "create" && log.new_value && (
+                                <div className="text-xs">
+                                  <span className="text-muted-foreground">Amount: </span>
+                                  <span className="font-medium">
+                                    ${(log.new_value as any).total_amount?.toFixed(2) || "—"}
+                                  </span>
+                                  {(log.new_value as any).status && (
+                                    <>
+                                      <span className="text-muted-foreground ml-2">Status: </span>
+                                      <span>{(log.new_value as any).status}</span>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                              {log.action_type === "update" && (
+                                <div className="text-xs">
+                                  <span className="text-muted-foreground">
+                                    {(log.old_value as any)?.status} → {(log.new_value as any)?.status}
+                                  </span>
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                              {formatDate(log.created_at)}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       </main>
 
@@ -531,6 +881,67 @@ export default function AdminDashboard() {
                 </>
               ) : (
                 "Update Role"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Resolve Fraud Flag Dialog */}
+      <Dialog open={resolveDialogOpen} onOpenChange={setResolveDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Resolve Fraud Flag</DialogTitle>
+            <DialogDescription>
+              Mark this fraud flag as resolved and add resolution notes
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedFlag && (
+            <div className="py-4 space-y-4">
+              <div className="p-3 bg-muted rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge variant={getSeverityBadgeVariant(selectedFlag.severity)}>
+                    {selectedFlag.severity}
+                  </Badge>
+                  <span className="capitalize font-medium">
+                    {selectedFlag.flag_type.replace("_", " ")}
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground">{selectedFlag.description}</p>
+              </div>
+              
+              <div>
+                <label className="text-sm font-medium mb-2 block">Resolution Notes</label>
+                <Textarea
+                  value={resolutionNotes}
+                  onChange={(e) => setResolutionNotes(e.target.value)}
+                  placeholder="Describe how this flag was investigated and resolved..."
+                  rows={3}
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResolveDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={resolveFraudFlag}
+              disabled={actionLoading !== null}
+              className="bg-success hover:bg-success/90"
+            >
+              {actionLoading ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Resolving...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                  Mark Resolved
+                </>
               )}
             </Button>
           </DialogFooter>
