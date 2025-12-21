@@ -13,8 +13,9 @@ import { useToast } from "@/hooks/use-toast";
 import { 
   Shield, Users, Activity, ArrowLeft, RefreshCw, 
   CheckCircle, XCircle, AlertTriangle, Clock, Unlock, Lock, UserCog,
-  Flag, FileText, AlertOctagon, DollarSign, Zap
+  Flag, FileText, AlertOctagon, DollarSign, Zap, BarChart3
 } from "lucide-react";
+import FraudAnalytics from "@/components/FraudAnalytics";
 import type { Database } from "@/integrations/supabase/types";
 
 type Profile = Database["public"]["Tables"]["profiles"]["Row"];
@@ -432,7 +433,7 @@ export default function AdminDashboard() {
 
         {/* Tabs */}
         <Tabs defaultValue="users" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="users" className="gap-2">
               <Users className="h-4 w-4" />
               <span className="hidden sm:inline">Users</span>
@@ -449,6 +450,10 @@ export default function AdminDashboard() {
                   {stats.unresolvedFlags}
                 </span>
               )}
+            </TabsTrigger>
+            <TabsTrigger value="analytics" className="gap-2">
+              <BarChart3 className="h-4 w-4" />
+              <span className="hidden sm:inline">Analytics</span>
             </TabsTrigger>
             <TabsTrigger value="audit" className="gap-2">
               <FileText className="h-4 w-4" />
@@ -743,6 +748,11 @@ export default function AdminDashboard() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Analytics Tab */}
+          <TabsContent value="analytics">
+            <FraudAnalytics fraudFlags={fraudFlags} />
           </TabsContent>
 
           {/* Audit Trail Tab */}
