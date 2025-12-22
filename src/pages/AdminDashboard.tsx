@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { 
   Shield, Users, Activity, ArrowLeft, RefreshCw, 
   CheckCircle, XCircle, AlertTriangle, Clock, Unlock, Lock, UserCog,
-  Flag, FileText, AlertOctagon, DollarSign, Zap, BarChart3
+  Flag, FileText, AlertOctagon, DollarSign, Zap, BarChart3, ThumbsUp, ThumbsDown
 } from "lucide-react";
 import FraudAnalytics from "@/components/FraudAnalytics";
 import type { Database } from "@/integrations/supabase/types";
@@ -39,10 +39,13 @@ export default function AdminDashboard() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [roleDialogOpen, setRoleDialogOpen] = useState(false);
   const [resolveDialogOpen, setResolveDialogOpen] = useState(false);
+  const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserWithRole | null>(null);
   const [selectedRole, setSelectedRole] = useState<AppRole>("customer");
   const [selectedFlag, setSelectedFlag] = useState<FraudFlag | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState("");
+  const [resolutionType, setResolutionType] = useState<string>("verified_legitimate");
+  const [notesError, setNotesError] = useState("");
   const [stats, setStats] = useState({
     totalUsers: 0,
     activeToday: 0,
@@ -227,28 +230,43 @@ export default function AdminDashboard() {
   const resolveFraudFlag = async () => {
     if (!selectedFlag) return;
     
+    // Validate required notes (minimum 20 characters)
+    if (resolutionNotes.trim().length < 20) {
+      setNotesError("Resolution notes must be at least 20 characters");
+      return;
+    }
+    
+    setNotesError("");
     setActionLoading(selectedFlag.id);
     
     try {
+      // Check if flag requires approval (high severity)
+      const needsApproval = selectedFlag.severity === "high";
+      
       const { error } = await supabase
         .from("fraud_flags")
         .update({
-          resolved: true,
-          resolved_at: new Date().toISOString(),
+          resolved: !needsApproval, // Only mark resolved if no approval needed
+          resolved_at: needsApproval ? null : new Date().toISOString(),
           resolved_by: currentUserId,
           resolution_notes: resolutionNotes,
+          resolution_type: resolutionType,
+          approval_status: needsApproval ? "pending_approval" : "approved",
         })
         .eq("id", selectedFlag.id);
 
       if (error) throw error;
 
       toast({
-        title: "Flag Resolved",
-        description: "The fraud flag has been marked as resolved.",
+        title: needsApproval ? "Resolution Submitted" : "Flag Resolved",
+        description: needsApproval 
+          ? "High severity flag submitted for admin approval." 
+          : "The fraud flag has been marked as resolved.",
       });
 
       setResolveDialogOpen(false);
       setResolutionNotes("");
+      setResolutionType("verified_legitimate");
       setSelectedFlag(null);
       await loadData();
     } catch (error: any) {
@@ -263,6 +281,52 @@ export default function AdminDashboard() {
     setActionLoading(null);
   };
 
+  const approveFraudResolution = async (approve: boolean) => {
+    if (!selectedFlag) return;
+    
+    setActionLoading(selectedFlag.id);
+    
+    try {
+      const { error } = await supabase
+        .from("fraud_flags")
+        .update({
+          resolved: approve,
+          resolved_at: approve ? new Date().toISOString() : null,
+          approved_by: currentUserId,
+          approved_at: new Date().toISOString(),
+          approval_status: approve ? "approved" : "rejected",
+        })
+        .eq("id", selectedFlag.id);
+
+      if (error) throw error;
+
+      toast({
+        title: approve ? "Resolution Approved" : "Resolution Rejected",
+        description: approve 
+          ? "The fraud flag resolution has been approved." 
+          : "The resolution was rejected. Flag remains open.",
+      });
+
+      setApproveDialogOpen(false);
+      setSelectedFlag(null);
+      await loadData();
+    } catch (error: any) {
+      console.error("Approve resolution error:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to process approval.",
+      });
+    }
+    
+    setActionLoading(null);
+  };
+
+  const openApproveDialog = (flag: FraudFlag) => {
+    setSelectedFlag(flag);
+    setApproveDialogOpen(true);
+  };
+
   const openRoleDialog = (user: UserWithRole) => {
     setSelectedUser(user);
     setSelectedRole(user.role || "customer");
@@ -272,7 +336,36 @@ export default function AdminDashboard() {
   const openResolveDialog = (flag: FraudFlag) => {
     setSelectedFlag(flag);
     setResolutionNotes("");
+    setResolutionType("verified_legitimate");
+    setNotesError("");
     setResolveDialogOpen(true);
+  };
+
+  const getApprovalStatusBadge = (flag: FraudFlag) => {
+    const status = (flag as any).approval_status;
+    if (!status) return null;
+    
+    switch (status) {
+      case "pending_approval":
+        return <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20">Pending Approval</Badge>;
+      case "approved":
+        return <Badge variant="outline" className="bg-success/10 text-success border-success/20">Approved</Badge>;
+      case "rejected":
+        return <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/20">Rejected</Badge>;
+      default:
+        return null;
+    }
+  };
+
+  const getResolutionTypeLabel = (type: string) => {
+    switch (type) {
+      case "verified_legitimate": return "Verified Legitimate";
+      case "confirmed_fraud": return "Confirmed Fraud";
+      case "false_positive": return "False Positive";
+      case "user_contacted": return "User Contacted";
+      case "escalated": return "Escalated";
+      default: return type;
+    }
   };
 
   const formatDate = (dateString: string | null) => {
@@ -672,76 +765,113 @@ export default function AdminDashboard() {
                           <TableHead>Description</TableHead>
                           <TableHead>User</TableHead>
                           <TableHead>Time</TableHead>
+                          <TableHead>Approval</TableHead>
                           <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {fraudFlags.map((flag) => (
-                          <TableRow key={flag.id} className={flag.resolved ? "opacity-60" : ""}>
-                            <TableCell>
-                              {flag.resolved ? (
-                                <Badge variant="outline" className="text-success border-success">
-                                  <CheckCircle className="h-3 w-3 mr-1" />
-                                  Resolved
+                        {fraudFlags.map((flag) => {
+                          const approvalStatus = (flag as any).approval_status;
+                          const isPendingApproval = approvalStatus === "pending_approval";
+                          const resolutionType = (flag as any).resolution_type;
+                          
+                          return (
+                            <TableRow key={flag.id} className={flag.resolved ? "opacity-60" : ""}>
+                              <TableCell>
+                                {flag.resolved ? (
+                                  <Badge variant="outline" className="text-success border-success">
+                                    <CheckCircle className="h-3 w-3 mr-1" />
+                                    Resolved
+                                  </Badge>
+                                ) : isPendingApproval ? (
+                                  <Badge variant="outline" className="text-warning border-warning">
+                                    <Clock className="h-3 w-3 mr-1" />
+                                    Pending
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="destructive">
+                                    <AlertTriangle className="h-3 w-3 mr-1" />
+                                    Open
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  {getFlagTypeIcon(flag.flag_type)}
+                                  <span className="capitalize">{flag.flag_type.replace("_", " ")}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant={getSeverityBadgeVariant(flag.severity)}>
+                                  {flag.severity}
                                 </Badge>
-                              ) : (
-                                <Badge variant="destructive">
-                                  <AlertTriangle className="h-3 w-3 mr-1" />
-                                  Open
-                                </Badge>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                {getFlagTypeIcon(flag.flag_type)}
-                                <span className="capitalize">{flag.flag_type.replace("_", " ")}</span>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant={getSeverityBadgeVariant(flag.severity)}>
-                                {flag.severity}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="max-w-[250px]">
-                              <p className="truncate" title={flag.description}>{flag.description}</p>
-                              {flag.metadata && Object.keys(flag.metadata).length > 0 && (
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  {JSON.stringify(flag.metadata)}
-                                </p>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-sm">
-                              {getUserEmail(flag.user_id)}
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                              {formatDate(flag.created_at)}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {!flag.resolved && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => openResolveDialog(flag)}
-                                  disabled={actionLoading === flag.id}
-                                >
-                                  {actionLoading === flag.id ? (
-                                    <RefreshCw className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <>
-                                      <CheckCircle className="h-4 w-4 mr-1" />
-                                      Resolve
-                                    </>
-                                  )}
-                                </Button>
-                              )}
-                              {flag.resolved && flag.resolution_notes && (
-                                <span className="text-xs text-muted-foreground" title={flag.resolution_notes}>
-                                  {flag.resolution_notes.slice(0, 20)}...
-                                </span>
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                              </TableCell>
+                              <TableCell className="max-w-[250px]">
+                                <p className="truncate" title={flag.description}>{flag.description}</p>
+                                {flag.metadata && Object.keys(flag.metadata).length > 0 && (
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    {JSON.stringify(flag.metadata)}
+                                  </p>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-sm">
+                                {getUserEmail(flag.user_id)}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                                {formatDate(flag.created_at)}
+                              </TableCell>
+                              <TableCell>
+                                {getApprovalStatusBadge(flag)}
+                                {resolutionType && (
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    {getResolutionTypeLabel(resolutionType)}
+                                  </p>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right space-x-2">
+                                {!flag.resolved && !isPendingApproval && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => openResolveDialog(flag)}
+                                    disabled={actionLoading === flag.id}
+                                  >
+                                    {actionLoading === flag.id ? (
+                                      <RefreshCw className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <>
+                                        <CheckCircle className="h-4 w-4 mr-1" />
+                                        Resolve
+                                      </>
+                                    )}
+                                  </Button>
+                                )}
+                                {isPendingApproval && (
+                                  <Button
+                                    variant="default"
+                                    size="sm"
+                                    onClick={() => openApproveDialog(flag)}
+                                    disabled={actionLoading === flag.id}
+                                  >
+                                    {actionLoading === flag.id ? (
+                                      <RefreshCw className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <>
+                                        <ThumbsUp className="h-4 w-4 mr-1" />
+                                        Review
+                                      </>
+                                    )}
+                                  </Button>
+                                )}
+                                {flag.resolved && flag.resolution_notes && (
+                                  <span className="text-xs text-muted-foreground" title={flag.resolution_notes}>
+                                    {flag.resolution_notes.slice(0, 20)}...
+                                  </span>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>
@@ -899,11 +1029,113 @@ export default function AdminDashboard() {
 
       {/* Resolve Fraud Flag Dialog */}
       <Dialog open={resolveDialogOpen} onOpenChange={setResolveDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Resolve Fraud Flag</DialogTitle>
             <DialogDescription>
-              Mark this fraud flag as resolved and add resolution notes
+              {selectedFlag?.severity === "high" 
+                ? "High severity flags require admin approval after resolution submission."
+                : "Mark this fraud flag as resolved with required documentation."}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedFlag && (
+            <div className="py-4 space-y-4">
+              <div className="p-3 bg-muted rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge variant={getSeverityBadgeVariant(selectedFlag.severity)}>
+                    {selectedFlag.severity}
+                  </Badge>
+                  <span className="capitalize font-medium">
+                    {selectedFlag.flag_type.replace("_", " ")}
+                  </span>
+                  {selectedFlag.severity === "high" && (
+                    <Badge variant="outline" className="ml-auto text-warning border-warning">
+                      Requires Approval
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground">{selectedFlag.description}</p>
+              </div>
+              
+              <div>
+                <label className="text-sm font-medium mb-2 block">Resolution Type <span className="text-destructive">*</span></label>
+                <Select value={resolutionType} onValueChange={setResolutionType}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select resolution type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="verified_legitimate">Verified Legitimate - Transaction confirmed valid</SelectItem>
+                    <SelectItem value="false_positive">False Positive - Incorrectly flagged</SelectItem>
+                    <SelectItem value="confirmed_fraud">Confirmed Fraud - Action taken</SelectItem>
+                    <SelectItem value="user_contacted">User Contacted - Awaiting response</SelectItem>
+                    <SelectItem value="escalated">Escalated - Referred to management</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
+                <label className="text-sm font-medium mb-2 block">
+                  Resolution Notes <span className="text-destructive">*</span>
+                  <span className="text-xs text-muted-foreground ml-2">(minimum 20 characters)</span>
+                </label>
+                <Textarea
+                  value={resolutionNotes}
+                  onChange={(e) => {
+                    setResolutionNotes(e.target.value);
+                    if (e.target.value.length >= 20) setNotesError("");
+                  }}
+                  placeholder="Describe the investigation process, findings, and actions taken..."
+                  rows={4}
+                  className={notesError ? "border-destructive" : ""}
+                />
+                {notesError && (
+                  <p className="text-sm text-destructive mt-1">{notesError}</p>
+                )}
+                <p className="text-xs text-muted-foreground mt-1">
+                  {resolutionNotes.length}/20 characters minimum
+                </p>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResolveDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={resolveFraudFlag}
+              disabled={actionLoading !== null}
+              className={selectedFlag?.severity === "high" ? "" : "bg-success hover:bg-success/90"}
+            >
+              {actionLoading ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : selectedFlag?.severity === "high" ? (
+                <>
+                  <Clock className="h-4 w-4 mr-2" />
+                  Submit for Approval
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                  Mark Resolved
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Approval Dialog */}
+      <Dialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Review Resolution</DialogTitle>
+            <DialogDescription>
+              Review and approve or reject this high-severity fraud flag resolution.
             </DialogDescription>
           </DialogHeader>
           
@@ -921,36 +1153,59 @@ export default function AdminDashboard() {
                 <p className="text-sm text-muted-foreground">{selectedFlag.description}</p>
               </div>
               
-              <div>
-                <label className="text-sm font-medium mb-2 block">Resolution Notes</label>
-                <Textarea
-                  value={resolutionNotes}
-                  onChange={(e) => setResolutionNotes(e.target.value)}
-                  placeholder="Describe how this flag was investigated and resolved..."
-                  rows={3}
-                />
+              <div className="p-3 border rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Resolution Type:</span>
+                  <Badge variant="outline">
+                    {getResolutionTypeLabel((selectedFlag as any).resolution_type || "unknown")}
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Resolved By:</span>
+                  <span className="text-sm text-muted-foreground">
+                    {getUserEmail(selectedFlag.resolved_by)}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="p-3 bg-accent/50 rounded-lg">
+                <p className="text-sm font-medium mb-1">Resolution Notes:</p>
+                <p className="text-sm text-muted-foreground">
+                  {selectedFlag.resolution_notes || "No notes provided"}
+                </p>
               </div>
             </div>
           )}
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setResolveDialogOpen(false)}>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setApproveDialogOpen(false)}>
               Cancel
             </Button>
             <Button 
-              onClick={resolveFraudFlag}
+              variant="destructive"
+              onClick={() => approveFraudResolution(false)}
+              disabled={actionLoading !== null}
+            >
+              {actionLoading ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  <ThumbsDown className="h-4 w-4 mr-2" />
+                  Reject
+                </>
+              )}
+            </Button>
+            <Button 
+              onClick={() => approveFraudResolution(true)}
               disabled={actionLoading !== null}
               className="bg-success hover:bg-success/90"
             >
               {actionLoading ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Resolving...
-                </>
+                <RefreshCw className="h-4 w-4 animate-spin" />
               ) : (
                 <>
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  Mark Resolved
+                  <ThumbsUp className="h-4 w-4 mr-2" />
+                  Approve
                 </>
               )}
             </Button>

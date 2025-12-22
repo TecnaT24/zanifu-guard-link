@@ -48,13 +48,18 @@ export type Database = {
       }
       fraud_flags: {
         Row: {
+          approval_status: string | null
+          approved_at: string | null
+          approved_by: string | null
           created_at: string
           description: string
           flag_type: string
           id: string
           metadata: Json | null
           order_id: string | null
+          requires_approval: boolean | null
           resolution_notes: string | null
+          resolution_type: string | null
           resolved: boolean
           resolved_at: string | null
           resolved_by: string | null
@@ -62,13 +67,18 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          approval_status?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
           created_at?: string
           description: string
           flag_type: string
           id?: string
           metadata?: Json | null
           order_id?: string | null
+          requires_approval?: boolean | null
           resolution_notes?: string | null
+          resolution_type?: string | null
           resolved?: boolean
           resolved_at?: string | null
           resolved_by?: string | null
@@ -76,13 +86,18 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          approval_status?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
           created_at?: string
           description?: string
           flag_type?: string
           id?: string
           metadata?: Json | null
           order_id?: string | null
+          requires_approval?: boolean | null
           resolution_notes?: string | null
+          resolution_type?: string | null
           resolved?: boolean
           resolved_at?: string | null
           resolved_by?: string | null
