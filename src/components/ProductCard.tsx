@@ -2,6 +2,7 @@ import { ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { formatKSH } from "@/lib/currency";
 
 interface ProductCardProps {
   id: string;
@@ -54,7 +55,7 @@ const ProductCard = ({
       </CardContent>
       <CardFooter className="flex items-center justify-between">
         <span className="text-xl font-bold text-primary">
-          ${price.toFixed(2)}
+          {formatKSH(price)}
         </span>
         <Button
           size="sm"
