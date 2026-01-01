@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Package, Download, ArrowLeft, ShoppingBag } from "lucide-react";
 import { format } from "date-fns";
+import { formatKSH } from "@/lib/currency";
 
 interface OrderItem {
   id: string;
@@ -163,7 +164,7 @@ const Orders = () => {
                         {order.status}
                       </Badge>
                       <span className="font-bold text-lg">
-                        ${order.total_amount.toFixed(2)}
+                        {formatKSH(order.total_amount)}
                       </span>
                     </div>
                   </div>
@@ -191,7 +192,7 @@ const Orders = () => {
                         <div className="flex-1">
                           <h4 className="font-medium">{item.product.name}</h4>
                           <p className="text-sm text-muted-foreground">
-                            Qty: {item.quantity} × ${item.price_at_purchase.toFixed(2)}
+                            Qty: {item.quantity} × {formatKSH(item.price_at_purchase)}
                           </p>
                         </div>
                         {order.status === "completed" && (

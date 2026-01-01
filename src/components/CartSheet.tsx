@@ -10,6 +10,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { formatKSH } from "@/lib/currency";
 
 interface CartItem {
   id: string;
@@ -103,7 +104,7 @@ const CartSheet = ({
                         {item.product.name}
                       </h4>
                       <p className="text-primary font-semibold">
-                        ${item.product.price.toFixed(2)}
+                        {formatKSH(item.product.price)}
                       </p>
                       <div className="flex items-center gap-2 mt-2">
                         <Button
@@ -151,7 +152,7 @@ const CartSheet = ({
               <Separator />
               <div className="flex items-center justify-between text-lg font-semibold">
                 <span>Total</span>
-                <span className="text-primary">${totalPrice.toFixed(2)}</span>
+                <span className="text-primary">{formatKSH(totalPrice)}</span>
               </div>
               <Button
                 className="w-full"
