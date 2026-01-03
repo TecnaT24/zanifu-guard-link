@@ -66,13 +66,13 @@ const Checkout = () => {
 
     setIsProcessing(true);
     try {
-      // Create order
+      // Create order with pending status first
       const { data: order, error: orderError } = await supabase
         .from("orders")
         .insert({
           user_id: user.id,
           total_amount: totalPrice,
-          status: "completed",
+          status: paymentMethod === "mpesa" ? "pending" : "completed",
           payment_method: paymentMethod,
         })
         .select()
@@ -94,18 +94,44 @@ const Checkout = () => {
 
       if (itemsError) throw itemsError;
 
+      // If M-Pesa, trigger STK Push
+      if (paymentMethod === "mpesa") {
+        const { data: stkData, error: stkError } = await supabase.functions.invoke("mpesa-stk-push", {
+          body: {
+            phoneNumber: mpesaPhone,
+            amount: totalPrice,
+            orderId: order.id,
+            accountReference: `SecureGuard-${order.id.substring(0, 8)}`,
+          },
+        });
+
+        if (stkError) {
+          console.error("STK Push error:", stkError);
+          throw new Error(stkError.message || "Failed to initiate M-Pesa payment");
+        }
+
+        if (!stkData?.success) {
+          throw new Error(stkData?.error || "M-Pesa payment initiation failed");
+        }
+
+        toast({
+          title: "M-Pesa Payment Initiated",
+          description: "Check your phone and enter your M-Pesa PIN to complete payment.",
+        });
+      }
+
       // Clear cart
       await clearCart();
 
       setOrderId(order.id);
       setOrderComplete(true);
 
-      toast({
-        title: "Order placed successfully!",
-        description: paymentMethod === "mpesa" 
-          ? "Check your phone for M-Pesa payment prompt" 
-          : "Your digital products are now available",
-      });
+      if (paymentMethod !== "mpesa") {
+        toast({
+          title: "Order placed successfully!",
+          description: "Your digital products are now available",
+        });
+      }
     } catch (error: any) {
       console.error("Checkout error:", error);
       toast({
