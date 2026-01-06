@@ -204,6 +204,13 @@ export default function Auth() {
 
       if (result.valid) {
         await logLoginAttempt(pendingEmail!, true, undefined, pendingUserId!);
+        
+        // Update last_login_at for active today tracking
+        await supabase
+          .from("profiles")
+          .update({ last_login_at: new Date().toISOString() })
+          .eq("user_id", pendingUserId);
+        
         toast({
           title: "Welcome!",
           description: "Two-factor authentication successful.",
