@@ -205,8 +205,7 @@ export default function Auth() {
       if (result.valid) {
         await logLoginAttempt(pendingEmail!, true, undefined, pendingUserId!);
         
-        // Update last_login_at for active today tracking using RPC function
-        await supabase.rpc("update_last_login", { p_user_id: pendingUserId });
+        // Note: last_login_at is updated by the verify-2fa-code edge function
         
         toast({
           title: "Welcome!",
