@@ -27,8 +27,36 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   try {
+    // SECURITY: Verify authentication first
+    const authHeader = req.headers.get("authorization");
+    if (!authHeader) {
+      console.error("Missing authorization header");
+      return new Response(
+        JSON.stringify({ error: "Authentication required" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    // Create Supabase client with user's auth token to verify they are authenticated
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+    
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+    
+    if (authError || !user) {
+      console.error("Authentication failed:", authError?.message);
+      return new Response(
+        JSON.stringify({ error: "Invalid authentication" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
     const { email, userId }: Send2FARequest = await req.json();
-    console.log(`Generating 2FA code for email: ${email}`);
+    console.log(`Generating 2FA code for authenticated user`);
 
     if (!email || !userId) {
       console.error("Missing email or userId");
@@ -38,14 +66,38 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    const code = generateCode();
-    console.log(`Generated 6-digit code for user ${userId}`);
+    // SECURITY: Verify that the authenticated user matches the userId being requested
+    if (user.id !== userId) {
+      console.error("User ID mismatch - potential tampering detected");
+      return new Response(
+        JSON.stringify({ error: "Unauthorized request" }),
+        { status: 403, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
 
-    // Store the code in the database using service role
+    // SECURITY: Rate limiting - check recent 2FA codes for this user
     const supabaseAdmin = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
+      supabaseUrl,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
+
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const { data: recentCodes, error: rateCheckError } = await supabaseAdmin
+      .from("two_factor_codes")
+      .select("id")
+      .eq("user_id", userId)
+      .gte("created_at", tenMinutesAgo);
+
+    if (!rateCheckError && recentCodes && recentCodes.length >= 3) {
+      console.warn("Rate limit exceeded for user:", userId);
+      return new Response(
+        JSON.stringify({ error: "Too many verification codes requested. Please wait before trying again." }),
+        { status: 429, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    const code = generateCode();
+    console.log(`Generated 6-digit code for user`);
 
     // Invalidate any existing unused codes for this user
     await supabaseAdmin
@@ -62,7 +114,7 @@ const handler = async (req: Request): Promise<Response> => {
     });
 
     if (insertError) {
-      console.error("Failed to store 2FA code:", insertError);
+      console.error("Failed to store 2FA code");
       return new Response(
         JSON.stringify({ error: "Failed to generate verification code" }),
         { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
@@ -106,16 +158,16 @@ const handler = async (req: Request): Promise<Response> => {
       `,
     });
 
-    console.log("Email sent successfully:", emailResponse);
+    console.log("Email send attempt completed");
 
     return new Response(
       JSON.stringify({ success: true, message: "Verification code sent" }),
       { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
     );
   } catch (error: any) {
-    console.error("Error in send-2fa-code function:", error);
+    console.error("Error in send-2fa-code function");
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: "An unexpected error occurred" }),
       { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
     );
   }
