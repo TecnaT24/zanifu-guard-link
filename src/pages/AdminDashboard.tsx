@@ -14,9 +14,11 @@ import { useToast } from "@/hooks/use-toast";
 import { 
   Shield, Users, Activity, ArrowLeft, RefreshCw, 
   CheckCircle, XCircle, AlertTriangle, Clock, Unlock, Lock, UserCog,
-  Flag, FileText, AlertOctagon, DollarSign, Zap, BarChart3, ThumbsUp, ThumbsDown
+  Flag, FileText, AlertOctagon, DollarSign, Zap, BarChart3, ThumbsUp, ThumbsDown,
+  Scan
 } from "lucide-react";
 import FraudAnalytics from "@/components/FraudAnalytics";
+import { SecurityScanner } from "@/components/SecurityScanner";
 import type { Database } from "@/integrations/supabase/types";
 
 type Profile = Database["public"]["Tables"]["profiles"]["Row"];
@@ -527,7 +529,7 @@ export default function AdminDashboard() {
 
         {/* Tabs */}
         <Tabs defaultValue="users" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="users" className="gap-2">
               <Users className="h-4 w-4" />
               <span className="hidden sm:inline">Users</span>
@@ -544,6 +546,10 @@ export default function AdminDashboard() {
                   {stats.unresolvedFlags}
                 </span>
               )}
+            </TabsTrigger>
+            <TabsTrigger value="security" className="gap-2">
+              <Scan className="h-4 w-4" />
+              <span className="hidden sm:inline">Security</span>
             </TabsTrigger>
             <TabsTrigger value="analytics" className="gap-2">
               <BarChart3 className="h-4 w-4" />
@@ -879,6 +885,11 @@ export default function AdminDashboard() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Security Scanner Tab */}
+          <TabsContent value="security">
+            <SecurityScanner />
           </TabsContent>
 
           {/* Analytics Tab */}
