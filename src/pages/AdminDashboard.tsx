@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { formatKSH } from "@/lib/currency";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -940,11 +941,11 @@ export default function AdminDashboard() {
                               {getUserEmail(log.user_id)}
                             </TableCell>
                             <TableCell className="max-w-[300px]">
-                              {log.action_type === "create" && log.new_value && (
+{log.action_type === "create" && log.new_value && (
                                 <div className="text-xs">
                                   <span className="text-muted-foreground">Amount: </span>
                                   <span className="font-medium">
-                                    ${(log.new_value as any).total_amount?.toFixed(2) || "—"}
+                                    {(log.new_value as any).total_amount ? formatKSH((log.new_value as any).total_amount) : "—"}
                                   </span>
                                   {(log.new_value as any).status && (
                                     <>
