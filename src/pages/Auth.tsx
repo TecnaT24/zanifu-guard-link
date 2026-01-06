@@ -205,11 +205,8 @@ export default function Auth() {
       if (result.valid) {
         await logLoginAttempt(pendingEmail!, true, undefined, pendingUserId!);
         
-        // Update last_login_at for active today tracking
-        await supabase
-          .from("profiles")
-          .update({ last_login_at: new Date().toISOString() })
-          .eq("user_id", pendingUserId);
+        // Update last_login_at for active today tracking using RPC function
+        await supabase.rpc("update_last_login", { p_user_id: pendingUserId });
         
         toast({
           title: "Welcome!",

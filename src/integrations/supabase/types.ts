@@ -426,6 +426,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      update_last_login: { Args: { p_user_id: string }; Returns: undefined }
     }
     Enums: {
       app_role: "customer" | "admin" | "security_personnel"
