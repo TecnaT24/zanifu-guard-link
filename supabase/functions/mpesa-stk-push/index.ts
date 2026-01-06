@@ -16,11 +16,16 @@ async function getAccessToken(): Promise<string> {
   const consumerKey = Deno.env.get("MPESA_CONSUMER_KEY");
   const consumerSecret = Deno.env.get("MPESA_CONSUMER_SECRET");
 
+  console.log("Checking M-Pesa credentials...");
+  console.log("Consumer Key present:", !!consumerKey, "length:", consumerKey?.length);
+  console.log("Consumer Secret present:", !!consumerSecret, "length:", consumerSecret?.length);
+
   if (!consumerKey || !consumerSecret) {
     throw new Error("M-Pesa credentials not configured");
   }
 
   const auth = btoa(`${consumerKey}:${consumerSecret}`);
+  console.log("Auth header created, calling Safaricom OAuth...");
 
   const response = await fetch(
     "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
@@ -32,13 +37,15 @@ async function getAccessToken(): Promise<string> {
     }
   );
 
+  const responseText = await response.text();
+  console.log("Safaricom OAuth response status:", response.status);
+  console.log("Safaricom OAuth response:", responseText);
+
   if (!response.ok) {
-    const errorText = await response.text();
-    console.error("Failed to get access token:", errorText);
-    throw new Error("Failed to get M-Pesa access token");
+    throw new Error(`Failed to get M-Pesa access token: ${responseText}`);
   }
 
-  const data = await response.json();
+  const data = JSON.parse(responseText);
   console.log("Access token obtained successfully");
   return data.access_token;
 }
